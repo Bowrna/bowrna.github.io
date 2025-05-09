@@ -1,2 +1,2 @@
-I have crafted my own page using Jekyll with Sustain theme.
+I have crafted my page using Jekyll with Sustain theme.
 
