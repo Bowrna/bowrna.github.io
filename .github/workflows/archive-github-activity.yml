@@ -1,0 +1,42 @@
+name: Archive GitHub Activity
+
+on:
+  schedule:
+    # Runs at 01:00 UTC on the 1st of every month — archives the previous month
+    - cron: '0 1 1 * *'
+  workflow_dispatch:
+    inputs:
+      month:
+        description: 'Month to archive (YYYY-MM). Leave blank to archive the previous month.'
+        required: false
+
+jobs:
+  archive:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Fetch and write activity JSON
+        id: fetch
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_USER: Bowrna
+          TARGET_MONTH: ${{ github.event.inputs.month }}
+        run: node scripts/fetch-github-activity.js
+
+      - name: Commit archived data
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add static/github-activity/
+          git diff --staged --quiet \
+            && echo "No new events to commit." \
+            || git commit -m "archive GitHub activity for ${{ steps.fetch.outputs.month }}" \
+            && git push

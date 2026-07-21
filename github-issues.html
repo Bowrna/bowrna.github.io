@@ -303,7 +303,8 @@ title: GitHub Activity
 (function () {
   var GITHUB_USER  = 'Bowrna';
   var CACHE_KEY    = 'gh_events_' + GITHUB_USER;
-  var DEFAULT_TTL  = 5 * 60 * 1000; // 5 minutes
+  var DEFAULT_TTL  = 5 * 60 * 1000;
+  var ARCHIVE_BASE = '/static/github-activity';
   var PER_PAGE     = 100;
   var allEvents    = [];
   var activeFilter = 'all';
@@ -317,7 +318,7 @@ title: GitHub Activity
     PullRequestReviewCommentEvent: true
   };
 
-  // --- Cache ---
+  // --- Cache (current month only) ---
 
   function loadCache() {
     try {
@@ -335,45 +336,107 @@ title: GitHub Activity
     } catch (e) {}
   }
 
-  // Compute cache TTL from rate-limit headers on the last response.
-  // If remaining requests are low, cache until the reset window so we
-  // don't burn the few calls we have left on repeated page loads.
-  function computeExpiry(xhr) {
-    var remaining = parseInt(xhr.getResponseHeader('X-RateLimit-Remaining'), 10);
-    var reset     = parseInt(xhr.getResponseHeader('X-RateLimit-Reset'), 10);
+  // If fewer than 15 requests remain, extend TTL to cover the full
+  // rate-limit reset window so we don't burn calls on repeated loads.
+  function computeExpiry(headers) {
+    var remaining = parseInt(headers.remaining, 10);
+    var reset     = parseInt(headers.reset, 10);
     if (!isNaN(remaining) && !isNaN(reset) && remaining < 15) {
-      // extend cache to cover the full reset window (+ 10 s buffer)
       return reset * 1000 + 10000;
     }
     return Date.now() + DEFAULT_TTL;
   }
 
-  // --- Fetch ---
+  // --- Live fetch (current month) ---
 
-  function fetchPage(page, accumulated, lastXhr, callback) {
+  function fetchEventsPages(page, accumulated) {
     var url = 'https://api.github.com/users/' + GITHUB_USER + '/events/public'
       + '?per_page=' + PER_PAGE + '&page=' + page;
+    return fetch(url, { headers: { 'Accept': 'application/vnd.github.v3+json' } })
+      .then(function (res) {
+        if (!res.ok) throw new Error(res.status === 403 ? 'rate_limited' : 'http_' + res.status);
+        var headers = {
+          remaining: res.headers.get('x-ratelimit-remaining'),
+          reset:     res.headers.get('x-ratelimit-reset')
+        };
+        return res.json().then(function (data) {
+          var events = accumulated.concat(data || []);
+          if (data && data.length === PER_PAGE && page < 3) {
+            return fetchEventsPages(page + 1, events).then(function (next) {
+              return { events: next.events, headers: next.headers };
+            });
+          }
+          return { events: events, headers: headers };
+        });
+      });
+  }
 
-    var xhr = new XMLHttpRequest();
-    xhr.open('GET', url);
-    xhr.setRequestHeader('Accept', 'application/vnd.github.v3+json');
-    xhr.onload = function () {
-      if (xhr.status === 200) {
-        var data   = JSON.parse(xhr.responseText);
-        var events = accumulated.concat(data || []);
-        if (data && data.length === PER_PAGE && page < 3) {
-          fetchPage(page + 1, events, xhr, callback);
-        } else {
-          callback(null, events, xhr);
-        }
-      } else if (xhr.status === 403) {
-        callback('rate_limited', accumulated, xhr);
-      } else {
-        callback('error_' + xhr.status, accumulated, xhr);
-      }
-    };
-    xhr.onerror = function () { callback('network_error', accumulated, lastXhr); };
-    xhr.send();
+  function fetchLive() {
+    var cached = loadCache();
+    if (cached) {
+      return Promise.resolve({ events: cached.events, expiresAt: cached.expiresAt, fromCache: true });
+    }
+    return fetchEventsPages(1, []).then(function (result) {
+      var expiresAt = computeExpiry(result.headers);
+      saveCache(result.events, expiresAt);
+      return { events: result.events, expiresAt: expiresAt, fromCache: false };
+    });
+  }
+
+  // --- Archive loading ---
+
+  function loadIndex() {
+    return fetch(ARCHIVE_BASE + '/index.json')
+      .then(function (r) { return r.ok ? r.json() : { months: [] }; })
+      .catch(function () { return { months: [] }; });
+  }
+
+  function loadArchivedMonth(month) {
+    return fetch(ARCHIVE_BASE + '/' + month + '.json')
+      .then(function (r) { return r.ok ? r.json() : { events: [] }; })
+      .then(function (d) { return d.events || []; })
+      .catch(function () { return []; });
+  }
+
+  // --- Orchestrate: archive files + live API for current month ---
+
+  function loadAll() {
+    var currentMonth = new Date().toISOString().slice(0, 7);
+
+    loadIndex()
+      .then(function (index) {
+        var archived = (index.months || []).filter(function (m) { return m !== currentMonth; });
+        return Promise.all([fetchLive()].concat(archived.map(loadArchivedMonth)))
+          .then(function (results) {
+            var liveResult     = results[0];
+            var archivedEvents = results.slice(1);
+
+            // Merge and dedup by event id, sort newest-first
+            var seen = {}, merged = [];
+            [liveResult.events].concat(archivedEvents).forEach(function (evs) {
+              (evs || []).forEach(function (ev) {
+                if (!seen[ev.id]) { seen[ev.id] = true; merged.push(ev); }
+              });
+            });
+            merged.sort(function (a, b) { return new Date(b.created_at) - new Date(a.created_at); });
+
+            allEvents = merged;
+            if (!merged.length) {
+              document.getElementById('gh-timeline').innerHTML = '<div class="gh-status">No public activity found.</div>';
+              return;
+            }
+            populateRepoDropdown();
+            renderTimeline();
+            updateRateNote(liveResult.expiresAt, liveResult.fromCache, archived.length);
+          });
+      })
+      .catch(function (err) {
+        var html = err && err.message === 'rate_limited'
+          ? '<div class="gh-status"><p>GitHub API rate limit reached.</p>'
+            + '<p>View activity on <a href="https://github.com/Bowrna" target="_blank" style="color:#27A822">GitHub</a>.</p></div>'
+          : '<div class="gh-status">Failed to load activity. Please try again.</div>';
+        document.getElementById('gh-timeline').innerHTML = html;
+      });
   }
 
   // --- Event helpers ---
@@ -415,7 +478,7 @@ title: GitHub Activity
         kind:   'pr',
         dot:    (action === 'opened' || action === 'reopened') ? 'open' : merged ? 'merged' : action === 'closed' ? 'closed' : 'open',
         action: merged ? 'merged' : action,
-        labels: (pr.labels || [])
+        labels: pr.labels || []
       };
     }
     if (event.type === 'PullRequestReviewEvent') {
@@ -504,8 +567,8 @@ title: GitHub Activity
       groups[label].forEach(function (ev) {
         var meta = getEventMeta(ev);
         if (!meta) return;
-        var repo    = getRepo(ev);
-        var repoUrl = 'https://github.com/' + repo;
+        var repo       = getRepo(ev);
+        var repoUrl    = 'https://github.com/' + repo;
         var badgeLabel = meta.kind === 'pr' ? 'PR' : meta.kind === 'review' ? 'Review' : meta.kind === 'comment' ? 'Comment' : 'Issue';
 
         var labelsHtml = '';
@@ -537,24 +600,16 @@ title: GitHub Activity
     container.innerHTML = html;
   }
 
-  function updateRateNote(expiresAt, fromCache) {
+  function updateRateNote(expiresAt, fromCache, archivedCount) {
     var note = document.getElementById('gh-rate-note');
     if (!note) return;
     var refreshesAt = new Date(expiresAt).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
-    var source = fromCache ? 'Serving cached data' : 'Fetched from GitHub Events API';
-    note.innerHTML = source + ' &mdash; refreshes after ' + refreshesAt + '.';
-  }
-
-  function boot(events, expiresAt, fromCache) {
-    allEvents = events;
-    if (!fromCache && events.length > 0) saveCache(events, expiresAt);
-    if (!events.length) {
-      document.getElementById('gh-timeline').innerHTML = '<div class="gh-status">No public activity found.</div>';
-      return;
+    var parts = [];
+    if (archivedCount > 0) {
+      parts.push(archivedCount + ' month' + (archivedCount > 1 ? 's' : '') + ' from static archive');
     }
-    populateRepoDropdown();
-    renderTimeline();
-    updateRateNote(expiresAt, fromCache);
+    parts.push((fromCache ? 'cached' : 'live') + ' data for current month');
+    note.innerHTML = parts.join(' &mdash; ') + '. Refreshes after ' + refreshesAt + '.';
   }
 
   // --- Event listeners ---
@@ -573,23 +628,7 @@ title: GitHub Activity
     renderTimeline();
   });
 
-  // --- Load ---
-
-  var cached = loadCache();
-  if (cached) {
-    boot(cached.events, cached.expiresAt, true);
-  } else {
-    fetchPage(1, [], null, function (err, events, xhr) {
-      if (err === 'rate_limited' && !events.length) {
-        document.getElementById('gh-timeline').innerHTML = '<div class="gh-status">'
-          + '<p>GitHub API rate limit reached.</p>'
-          + '<p>View activity directly on <a href="https://github.com/Bowrna" target="_blank" style="color:#27A822">GitHub</a>.</p>'
-          + '</div>';
-        return;
-      }
-      var expiresAt = xhr ? computeExpiry(xhr) : Date.now() + DEFAULT_TTL;
-      boot(events, expiresAt, false);
-    });
-  }
+  // --- Start ---
+  loadAll();
 })();
 </script>
