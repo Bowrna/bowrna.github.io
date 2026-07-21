@@ -419,7 +419,7 @@ title: GitHub Activity
               });
             });
             merged.sort(function (a, b) { return new Date(b.created_at) - new Date(a.created_at); });
-            merged = suppressPREventsIfMerged(merged);
+            merged = deduplicatePRsPerMonth(merged);
 
             allEvents = merged;
             if (!merged.length) {
@@ -442,25 +442,36 @@ title: GitHub Activity
 
   // --- PR deduplication ---
 
-  function suppressPREventsIfMerged(events) {
-    // Collect repo#number keys for every merged PR
-    var mergedKeys = {};
+  var PR_TYPES = {
+    PullRequestEvent: true,
+    PullRequestReviewEvent: true,
+    PullRequestReviewCommentEvent: true
+  };
+
+  // For each unique PR (repo + number) within each calendar month, keep only
+  // the single most-recent event. That event carries the latest status
+  // (e.g. merged beats opened/reviewed because it happened last).
+  function deduplicatePRsPerMonth(events) {
+    var best = {}; // "YYYY-MM|repo#number" -> latest event so far
+
     events.forEach(function (ev) {
-      if (ev.type !== 'PullRequestEvent') return;
-      var p = ev.payload;
-      if (p && p.action === 'closed' && p.pull_request && p.pull_request.merged) {
-        mergedKeys[getRepo(ev) + '#' + p.pull_request.number] = true;
+      if (!PR_TYPES[ev.type]) return;
+      var pr = ev.payload && ev.payload.pull_request;
+      if (!pr || !pr.number) return;
+      var key = ev.created_at.slice(0, 7) + '|' + getRepo(ev) + '#' + pr.number;
+      if (!best[key] || ev.created_at > best[key].created_at) {
+        best[key] = ev;
       }
     });
-    // For a merged PR: keep only the merged event itself, drop everything else
-    // (opened, labeled, reviewed, review comments, etc.)
+
+    var kept = {};
+    Object.keys(best).forEach(function (k) { kept[best[k].id] = true; });
+
     return events.filter(function (ev) {
-      var p = ev.payload;
-      var pr = p && p.pull_request;
+      if (!PR_TYPES[ev.type]) return true;
+      var pr = ev.payload && ev.payload.pull_request;
       if (!pr || !pr.number) return true;
-      var key = getRepo(ev) + '#' + pr.number;
-      if (!mergedKeys[key]) return true;
-      return ev.type === 'PullRequestEvent' && p.action === 'closed' && pr.merged;
+      return kept[ev.id];
     });
   }
 
