@@ -223,6 +223,42 @@ title: GitHub Activity
   }
 
   .gh-rate-note a { color: #27A822; }
+
+  /* Repo dropdown */
+  .gh-repo-select-wrap {
+    margin-bottom: 20px;
+  }
+
+  .gh-repo-select-wrap label {
+    font-size: 12px;
+    font-weight: 600;
+    color: #999;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    margin-right: 8px;
+  }
+
+  #gh-repo-select {
+    appearance: none;
+    -webkit-appearance: none;
+    border: 1px solid #ddd;
+    border-radius: 20px;
+    background: #fff url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M0 0l5 6 5-6z' fill='%23999'/%3E%3C/svg%3E") no-repeat right 12px center;
+    padding: 5px 32px 5px 14px;
+    font-size: 13px;
+    color: #555;
+    cursor: pointer;
+    outline: none;
+    transition: border-color 0.15s;
+    font-family: 'Source Sans Pro', sans-serif;
+    max-width: 320px;
+  }
+
+  #gh-repo-select:hover,
+  #gh-repo-select:focus {
+    border-color: #27A822;
+    color: #27A822;
+  }
 </style>
 
 <section class="gh-page">
@@ -239,6 +275,13 @@ title: GitHub Activity
       <button class="gh-filter-btn" data-filter="closed">Closed</button>
       <button class="gh-filter-btn" data-filter="pr">Pull Requests</button>
       <button class="gh-filter-btn" data-filter="issue">Issues only</button>
+    </div>
+
+    <div class="gh-repo-select-wrap">
+      <label for="gh-repo-select">Repository</label>
+      <select id="gh-repo-select" disabled>
+        <option value="all">All repositories</option>
+      </select>
     </div>
 
     <div id="gh-timeline" class="gh-timeline">
@@ -262,6 +305,7 @@ title: GitHub Activity
   var PER_PAGE    = 30;
   var allItems    = [];
   var activeFilter = 'all';
+  var activeRepo   = 'all';
 
   function fetchPage(page, accumulated, callback) {
     var url = 'https://api.github.com/search/issues'
@@ -325,13 +369,32 @@ title: GitHub Activity
 
   function filteredItems() {
     return allItems.filter(function (item) {
-      if (activeFilter === 'all')    return true;
+      if (activeRepo !== 'all' && parseRepo(item) !== activeRepo) return false;
       if (activeFilter === 'open')   return item.state === 'open';
       if (activeFilter === 'closed') return item.state === 'closed';
       if (activeFilter === 'pr')     return isPR(item);
       if (activeFilter === 'issue')  return !isPR(item);
       return true;
     });
+  }
+
+  function populateRepoDropdown() {
+    var seen = {};
+    var repos = [];
+    allItems.forEach(function (item) {
+      var r = parseRepo(item);
+      if (!seen[r]) { seen[r] = true; repos.push(r); }
+    });
+    repos.sort(function (a, b) { return a.toLowerCase().localeCompare(b.toLowerCase()); });
+
+    var select = document.getElementById('gh-repo-select');
+    repos.forEach(function (r) {
+      var opt = document.createElement('option');
+      opt.value = r;
+      opt.textContent = r;
+      select.appendChild(opt);
+    });
+    select.disabled = false;
   }
 
   function renderTimeline() {
@@ -408,6 +471,12 @@ title: GitHub Activity
       .replace(/"/g, '&quot;');
   }
 
+  // Repo dropdown change
+  document.getElementById('gh-repo-select').addEventListener('change', function () {
+    activeRepo = this.value;
+    renderTimeline();
+  });
+
   // Filter button clicks
   document.getElementById('gh-filters').addEventListener('click', function (e) {
     var btn = e.target.closest('.gh-filter-btn');
@@ -437,6 +506,7 @@ title: GitHub Activity
       return;
     }
 
+    populateRepoDropdown();
     renderTimeline();
   });
 })();
