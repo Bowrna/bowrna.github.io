@@ -419,8 +419,9 @@ title: GitHub Activity
               });
             });
             merged.sort(function (a, b) { return new Date(b.created_at) - new Date(a.created_at); });
+            merged = suppressOpenedIfMerged(merged);
 
-allEvents = merged;
+            allEvents = merged;
             if (!merged.length) {
               document.getElementById('gh-timeline').innerHTML = '<div class="gh-status">No public activity found.</div>';
               return;
@@ -437,6 +438,28 @@ allEvents = merged;
           : '<div class="gh-status">Failed to load activity. Please try again.</div>';
         document.getElementById('gh-timeline').innerHTML = html;
       });
+  }
+
+  // --- PR deduplication ---
+
+  function suppressOpenedIfMerged(events) {
+    // Collect repo+number keys for every merged PR
+    var mergedKeys = {};
+    events.forEach(function (ev) {
+      if (ev.type !== 'PullRequestEvent') return;
+      var p = ev.payload;
+      if (p && p.action === 'closed' && p.pull_request && p.pull_request.merged) {
+        mergedKeys[getRepo(ev) + '#' + p.pull_request.number] = true;
+      }
+    });
+    // Drop "opened" events for PRs that have a merged event
+    return events.filter(function (ev) {
+      if (ev.type !== 'PullRequestEvent') return true;
+      var p = ev.payload;
+      if (!p || p.action !== 'opened') return true;
+      var pr = p.pull_request;
+      return !pr || !mergedKeys[getRepo(ev) + '#' + pr.number];
+    });
   }
 
   // --- Event helpers ---
