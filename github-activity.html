@@ -420,24 +420,7 @@ title: GitHub Activity
             });
             merged.sort(function (a, b) { return new Date(b.created_at) - new Date(a.created_at); });
 
-            // DEBUG — open browser DevTools > Console
-            console.group('GH Activity debug');
-            console.log('total merged events:', merged.length);
-            var typeCounts = {};
-            merged.forEach(function (ev) { typeCounts[ev.type] = (typeCounts[ev.type] || 0) + 1; });
-            console.log('event types:', typeCounts);
-            if (merged.length > 0) {
-              console.log('first event raw:', JSON.stringify(merged[0], null, 2));
-            }
-            var prSample = merged.find(function (ev) { return ev.type && ev.type.indexOf('PullRequest') === 0; });
-            if (prSample) {
-              console.log('first PR event payload.pull_request:', JSON.stringify(prSample.payload && prSample.payload.pull_request, null, 2));
-            } else {
-              console.log('no PullRequest* events found in merged array');
-            }
-            console.groupEnd();
-
-            allEvents = merged;
+allEvents = merged;
             if (!merged.length) {
               document.getElementById('gh-timeline').innerHTML = '<div class="gh-status">No public activity found.</div>';
               return;
@@ -506,13 +489,14 @@ title: GitHub Activity
     }
     if (event.type === 'PullRequestEvent') {
       var pr = p.pull_request;
-      if (!pr || !pr.title) return null;
-      var url = ghUrl(repo, 'pull', pr.number || p.number, pr.html_url);
+      if (!pr || !pr.number) return null;
+      var url = ghUrl(repo, 'pull', pr.number, pr.html_url);
       if (!url) return null;
       var action = p.action || 'updated';
       var merged = action === 'closed' && pr.merged;
+      var title = pr.title || (pr.head && pr.head.ref ? pr.head.ref + ' (#' + pr.number + ')' : 'PR #' + pr.number);
       return {
-        title:  pr.title,
+        title:  title,
         url:    url,
         kind:   'pr',
         dot:    (action === 'opened' || action === 'reopened') ? 'open' : merged ? 'merged' : action === 'closed' ? 'closed' : 'open',
@@ -522,12 +506,12 @@ title: GitHub Activity
     }
     if (event.type === 'PullRequestReviewEvent') {
       var pr = p.pull_request;
-      if (!pr || !pr.title) return null;
-      // review.html_url is more reliable than abbreviated pr.html_url in review events
+      if (!pr || !pr.number) return null;
       var url = (p.review && p.review.html_url) || ghUrl(repo, 'pull', pr.number, pr.html_url);
       if (!url) return null;
+      var title = pr.title || (pr.head && pr.head.ref ? pr.head.ref + ' (#' + pr.number + ')' : 'PR #' + pr.number);
       return {
-        title:  pr.title,
+        title:  title,
         url:    url,
         kind:   'review',
         dot:    'review',
@@ -537,11 +521,12 @@ title: GitHub Activity
     }
     if (event.type === 'PullRequestReviewCommentEvent') {
       var pr = p.pull_request;
-      if (!pr || !pr.title) return null;
+      if (!pr || !pr.number) return null;
       var url = (p.comment && p.comment.html_url) || ghUrl(repo, 'pull', pr.number, pr.html_url);
       if (!url) return null;
+      var title = pr.title || (pr.head && pr.head.ref ? pr.head.ref + ' (#' + pr.number + ')' : 'PR #' + pr.number);
       return {
-        title:  pr.title,
+        title:  title,
         url:    url,
         kind:   'comment',
         dot:    'comment',
