@@ -128,9 +128,11 @@ title: GitHub Activity
     margin-top: 5px;
   }
 
-  .gh-state-dot.open   { background: #27A822; }
-  .gh-state-dot.closed { background: #cb2431; }
-  .gh-state-dot.merged { background: #6f42c1; }
+  .gh-state-dot.open    { background: #27A822; }
+  .gh-state-dot.closed  { background: #cb2431; }
+  .gh-state-dot.merged  { background: #6f42c1; }
+  .gh-state-dot.comment { background: #999; }
+  .gh-state-dot.review  { background: #0366d6; }
 
   .gh-item-title {
     flex: 1;
@@ -153,8 +155,10 @@ title: GitHub Activity
     white-space: nowrap;
   }
 
-  .gh-type-badge.issue { background: #e6f4ea; color: #27A822; }
-  .gh-type-badge.pr    { background: #f0ebfc; color: #6f42c1; }
+  .gh-type-badge.issue   { background: #e6f4ea; color: #27A822; }
+  .gh-type-badge.pr      { background: #f0ebfc; color: #6f42c1; }
+  .gh-type-badge.comment { background: #f1f1f1; color: #666; }
+  .gh-type-badge.review  { background: #e1f0ff; color: #0366d6; }
 
   .gh-item-meta {
     margin-top: 7px;
@@ -188,13 +192,11 @@ title: GitHub Activity
     color: #fff;
   }
 
-  .gh-state-text {
+  .gh-action-text {
     font-weight: 600;
+    color: #555;
+    text-transform: capitalize;
   }
-
-  .gh-state-text.open   { color: #27A822; }
-  .gh-state-text.closed { color: #cb2431; }
-  .gh-state-text.merged { color: #6f42c1; }
 
   /* Loading / error / empty */
   .gh-status {
@@ -271,10 +273,9 @@ title: GitHub Activity
 
     <div class="gh-filters" id="gh-filters">
       <button class="gh-filter-btn active" data-filter="all">All</button>
-      <button class="gh-filter-btn" data-filter="open">Open</button>
-      <button class="gh-filter-btn" data-filter="closed">Closed</button>
+      <button class="gh-filter-btn" data-filter="issue">Issues</button>
       <button class="gh-filter-btn" data-filter="pr">Pull Requests</button>
-      <button class="gh-filter-btn" data-filter="issue">Issues only</button>
+      <button class="gh-filter-btn" data-filter="comment">Comments</button>
     </div>
 
     <div class="gh-repo-select-wrap">
@@ -291,193 +292,278 @@ title: GitHub Activity
       </div>
     </div>
 
-    <p class="gh-rate-note">
-      Data fetched live from the
-      <a href="https://docs.github.com/en/rest/search/search" target="_blank">GitHub Search API</a>.
-      Unauthenticated requests are rate-limited to 10/min.
+    <p class="gh-rate-note" id="gh-rate-note">
+      Data from the <a href="https://docs.github.com/en/rest/activity/events" target="_blank">GitHub Events API</a>.
+      Cached locally — refreshes automatically when the cache expires.
     </p>
   </div>
 </section>
 
 <script>
 (function () {
-  var GITHUB_USER = 'Bowrna';
-  var PER_PAGE    = 30;
-  var allItems    = [];
+  var GITHUB_USER  = 'Bowrna';
+  var CACHE_KEY    = 'gh_events_' + GITHUB_USER;
+  var DEFAULT_TTL  = 5 * 60 * 1000; // 5 minutes
+  var PER_PAGE     = 100;
+  var allEvents    = [];
   var activeFilter = 'all';
   var activeRepo   = 'all';
 
-  function fetchPage(page, accumulated, callback) {
-    var url = 'https://api.github.com/search/issues'
-      + '?q=involves:' + GITHUB_USER
-      + '&sort=updated&order=desc'
-      + '&per_page=' + PER_PAGE
-      + '&page=' + page;
+  var RELEVANT = {
+    IssuesEvent: true,
+    IssueCommentEvent: true,
+    PullRequestEvent: true,
+    PullRequestReviewEvent: true,
+    PullRequestReviewCommentEvent: true
+  };
+
+  // --- Cache ---
+
+  function loadCache() {
+    try {
+      var raw = localStorage.getItem(CACHE_KEY);
+      if (!raw) return null;
+      var c = JSON.parse(raw);
+      if (Date.now() > c.expiresAt) return null;
+      return c;
+    } catch (e) { return null; }
+  }
+
+  function saveCache(events, expiresAt) {
+    try {
+      localStorage.setItem(CACHE_KEY, JSON.stringify({ events: events, expiresAt: expiresAt }));
+    } catch (e) {}
+  }
+
+  // Compute cache TTL from rate-limit headers on the last response.
+  // If remaining requests are low, cache until the reset window so we
+  // don't burn the few calls we have left on repeated page loads.
+  function computeExpiry(xhr) {
+    var remaining = parseInt(xhr.getResponseHeader('X-RateLimit-Remaining'), 10);
+    var reset     = parseInt(xhr.getResponseHeader('X-RateLimit-Reset'), 10);
+    if (!isNaN(remaining) && !isNaN(reset) && remaining < 15) {
+      // extend cache to cover the full reset window (+ 10 s buffer)
+      return reset * 1000 + 10000;
+    }
+    return Date.now() + DEFAULT_TTL;
+  }
+
+  // --- Fetch ---
+
+  function fetchPage(page, accumulated, lastXhr, callback) {
+    var url = 'https://api.github.com/users/' + GITHUB_USER + '/events/public'
+      + '?per_page=' + PER_PAGE + '&page=' + page;
 
     var xhr = new XMLHttpRequest();
     xhr.open('GET', url);
     xhr.setRequestHeader('Accept', 'application/vnd.github.v3+json');
     xhr.onload = function () {
       if (xhr.status === 200) {
-        var data = JSON.parse(xhr.responseText);
-        var items = accumulated.concat(data.items || []);
-        // fetch up to 3 pages (90 items) to build a meaningful timeline
-        if (data.items && data.items.length === PER_PAGE && page < 3) {
-          fetchPage(page + 1, items, callback);
+        var data   = JSON.parse(xhr.responseText);
+        var events = accumulated.concat(data || []);
+        if (data && data.length === PER_PAGE && page < 3) {
+          fetchPage(page + 1, events, xhr, callback);
         } else {
-          callback(null, items);
+          callback(null, events, xhr);
         }
       } else if (xhr.status === 403) {
-        callback('rate_limited', accumulated);
+        callback('rate_limited', accumulated, xhr);
       } else {
-        callback('error_' + xhr.status, accumulated);
+        callback('error_' + xhr.status, accumulated, xhr);
       }
     };
-    xhr.onerror = function () { callback('network_error', accumulated); };
+    xhr.onerror = function () { callback('network_error', accumulated, lastXhr); };
     xhr.send();
   }
 
-  function parseRepo(item) {
-    // repository_url: "https://api.github.com/repos/owner/repo"
-    var parts = (item.repository_url || '').split('/');
-    return parts.slice(-2).join('/');
+  // --- Event helpers ---
+
+  function getRepo(event) {
+    return event.repo ? event.repo.name : '';
   }
 
-  function isPR(item) {
-    return !!(item.pull_request);
+  function getEventMeta(event) {
+    var p = event.payload;
+    if (event.type === 'IssuesEvent') {
+      var action = p.action;
+      return {
+        title:  p.issue.title,
+        url:    p.issue.html_url,
+        kind:   'issue',
+        dot:    (action === 'opened' || action === 'reopened') ? 'open' : action === 'closed' ? 'closed' : 'open',
+        action: action,
+        labels: p.issue.labels || []
+      };
+    }
+    if (event.type === 'IssueCommentEvent') {
+      return {
+        title:  p.issue.title,
+        url:    (p.comment && p.comment.html_url) || p.issue.html_url,
+        kind:   'comment',
+        dot:    'comment',
+        action: 'commented',
+        labels: p.issue.labels || []
+      };
+    }
+    if (event.type === 'PullRequestEvent') {
+      var pr     = p.pull_request;
+      var action = p.action;
+      var merged = action === 'closed' && pr && pr.merged;
+      return {
+        title:  pr.title,
+        url:    pr.html_url,
+        kind:   'pr',
+        dot:    (action === 'opened' || action === 'reopened') ? 'open' : merged ? 'merged' : action === 'closed' ? 'closed' : 'open',
+        action: merged ? 'merged' : action,
+        labels: (pr.labels || [])
+      };
+    }
+    if (event.type === 'PullRequestReviewEvent') {
+      return {
+        title:  p.pull_request.title,
+        url:    p.pull_request.html_url,
+        kind:   'review',
+        dot:    'review',
+        action: 'reviewed',
+        labels: []
+      };
+    }
+    if (event.type === 'PullRequestReviewCommentEvent') {
+      return {
+        title:  p.pull_request.title,
+        url:    (p.comment && p.comment.html_url) || p.pull_request.html_url,
+        kind:   'comment',
+        dot:    'comment',
+        action: 'review comment',
+        labels: []
+      };
+    }
+    return null;
   }
 
-  function stateOf(item) {
-    if (isPR(item) && item.pull_request && item.pull_request.merged_at) return 'merged';
-    return item.state; // 'open' | 'closed'
-  }
+  // --- Filter & render ---
 
-  function formatDate(iso) {
-    var d = new Date(iso);
-    return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
-  }
-
-  function monthYear(iso) {
-    var d = new Date(iso);
-    return d.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
-  }
-
-  function labelStyle(color) {
-    // GitHub label colors are hex without '#'
-    return 'background-color:#' + color + ';';
-  }
-
-  function filteredItems() {
-    return allItems.filter(function (item) {
-      if (activeRepo !== 'all' && parseRepo(item) !== activeRepo) return false;
-      if (activeFilter === 'open')   return item.state === 'open';
-      if (activeFilter === 'closed') return item.state === 'closed';
-      if (activeFilter === 'pr')     return isPR(item);
-      if (activeFilter === 'issue')  return !isPR(item);
+  function filteredEvents() {
+    return allEvents.filter(function (ev) {
+      if (!RELEVANT[ev.type]) return false;
+      if (activeRepo !== 'all' && getRepo(ev) !== activeRepo) return false;
+      if (activeFilter === 'issue')   return ev.type === 'IssuesEvent' || ev.type === 'IssueCommentEvent';
+      if (activeFilter === 'pr')      return ev.type === 'PullRequestEvent' || ev.type === 'PullRequestReviewEvent' || ev.type === 'PullRequestReviewCommentEvent';
+      if (activeFilter === 'comment') return ev.type === 'IssueCommentEvent' || ev.type === 'PullRequestReviewCommentEvent';
       return true;
     });
   }
 
   function populateRepoDropdown() {
-    var seen = {};
-    var repos = [];
-    allItems.forEach(function (item) {
-      var r = parseRepo(item);
-      if (!seen[r]) { seen[r] = true; repos.push(r); }
+    var seen = {}, repos = [];
+    allEvents.forEach(function (ev) {
+      if (!RELEVANT[ev.type]) return;
+      var r = getRepo(ev);
+      if (r && !seen[r]) { seen[r] = true; repos.push(r); }
     });
     repos.sort(function (a, b) { return a.toLowerCase().localeCompare(b.toLowerCase()); });
-
-    var select = document.getElementById('gh-repo-select');
+    var sel = document.getElementById('gh-repo-select');
     repos.forEach(function (r) {
       var opt = document.createElement('option');
-      opt.value = r;
-      opt.textContent = r;
-      select.appendChild(opt);
+      opt.value = r; opt.textContent = r;
+      sel.appendChild(opt);
     });
-    select.disabled = false;
+    sel.disabled = false;
+  }
+
+  function formatDate(iso) {
+    return new Date(iso).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+  }
+
+  function monthYear(iso) {
+    return new Date(iso).toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+  }
+
+  function escHtml(s) {
+    return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
   }
 
   function renderTimeline() {
-    var items = filteredItems();
+    var events = filteredEvents();
     var container = document.getElementById('gh-timeline');
-
-    if (items.length === 0) {
+    if (!events.length) {
       container.innerHTML = '<div class="gh-status">No items found for this filter.</div>';
       return;
     }
 
-    // Group by month-year of updated_at
-    var groups = {};
-    var groupOrder = [];
-    items.forEach(function (item) {
-      var key = monthYear(item.updated_at);
-      if (!groups[key]) {
-        groups[key] = [];
-        groupOrder.push(key);
-      }
-      groups[key].push(item);
+    var groups = {}, order = [];
+    events.forEach(function (ev) {
+      var key = monthYear(ev.created_at);
+      if (!groups[key]) { groups[key] = []; order.push(key); }
+      groups[key].push(ev);
     });
 
     var html = '';
-    groupOrder.forEach(function (monthLabel) {
-      html += '<div class="gh-date-group">';
-      html += '<div class="gh-date-label">' + monthLabel + '</div>';
-
-      groups[monthLabel].forEach(function (item) {
-        var type  = isPR(item) ? 'pr' : 'issue';
-        var state = stateOf(item);
-        var repo  = parseRepo(item);
+    order.forEach(function (label) {
+      html += '<div class="gh-date-group"><div class="gh-date-label">' + label + '</div>';
+      groups[label].forEach(function (ev) {
+        var meta = getEventMeta(ev);
+        if (!meta) return;
+        var repo    = getRepo(ev);
         var repoUrl = 'https://github.com/' + repo;
-        var stateLabel = state.charAt(0).toUpperCase() + state.slice(1);
+        var badgeLabel = meta.kind === 'pr' ? 'PR' : meta.kind === 'review' ? 'Review' : meta.kind === 'comment' ? 'Comment' : 'Issue';
 
         var labelsHtml = '';
-        if (item.labels && item.labels.length) {
+        if (meta.labels.length) {
           labelsHtml = '<span class="gh-labels">';
-          item.labels.slice(0, 4).forEach(function (lbl) {
-            labelsHtml += '<span class="gh-label" style="' + labelStyle(lbl.color) + '">'
-              + escHtml(lbl.name) + '</span>';
+          meta.labels.slice(0, 4).forEach(function (l) {
+            labelsHtml += '<span class="gh-label" style="background-color:#' + escHtml(l.color) + '">' + escHtml(l.name) + '</span>';
           });
           labelsHtml += '</span>';
         }
 
         html += '<div class="gh-item">'
           + '<div class="gh-item-header">'
-          +   '<span class="gh-state-dot ' + state + '"></span>'
-          +   '<a class="gh-item-title" href="' + item.html_url + '" target="_blank">'
-          +     escHtml(item.title)
-          +   '</a>'
-          +   '<span class="gh-type-badge ' + type + '">' + (type === 'pr' ? 'PR' : 'Issue') + '</span>'
+          +   '<span class="gh-state-dot ' + meta.dot + '"></span>'
+          +   '<a class="gh-item-title" href="' + meta.url + '" target="_blank">' + escHtml(meta.title) + '</a>'
+          +   '<span class="gh-type-badge ' + meta.kind + '">' + badgeLabel + '</span>'
           + '</div>'
           + '<div class="gh-item-meta">'
           +   '<a class="gh-repo" href="' + repoUrl + '" target="_blank">' + escHtml(repo) + '</a>'
-          +   '<span class="gh-state-text ' + state + '">' + stateLabel + '</span>'
-          +   '<span>Updated ' + formatDate(item.updated_at) + '</span>'
+          +   '<span class="gh-action-text">' + escHtml(meta.action) + '</span>'
+          +   '<span>' + formatDate(ev.created_at) + '</span>'
           +   labelsHtml
           + '</div>'
           + '</div>';
       });
-
       html += '</div>';
     });
 
     container.innerHTML = html;
   }
 
-  function escHtml(str) {
-    return String(str)
-      .replace(/&/g, '&amp;')
-      .replace(/</g, '&lt;')
-      .replace(/>/g, '&gt;')
-      .replace(/"/g, '&quot;');
+  function updateRateNote(expiresAt, fromCache) {
+    var note = document.getElementById('gh-rate-note');
+    if (!note) return;
+    var refreshesAt = new Date(expiresAt).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+    var source = fromCache ? 'Serving cached data' : 'Fetched from GitHub Events API';
+    note.innerHTML = source + ' &mdash; refreshes after ' + refreshesAt + '.';
   }
 
-  // Repo dropdown change
+  function boot(events, expiresAt, fromCache) {
+    allEvents = events;
+    if (!fromCache && events.length > 0) saveCache(events, expiresAt);
+    if (!events.length) {
+      document.getElementById('gh-timeline').innerHTML = '<div class="gh-status">No public activity found.</div>';
+      return;
+    }
+    populateRepoDropdown();
+    renderTimeline();
+    updateRateNote(expiresAt, fromCache);
+  }
+
+  // --- Event listeners ---
+
   document.getElementById('gh-repo-select').addEventListener('change', function () {
     activeRepo = this.value;
     renderTimeline();
   });
 
-  // Filter button clicks
   document.getElementById('gh-filters').addEventListener('click', function (e) {
     var btn = e.target.closest('.gh-filter-btn');
     if (!btn) return;
@@ -487,27 +573,23 @@ title: GitHub Activity
     renderTimeline();
   });
 
-  // Kick off fetch
-  fetchPage(1, [], function (err, items) {
-    allItems = items;
-    var container = document.getElementById('gh-timeline');
+  // --- Load ---
 
-    if (err === 'rate_limited' && items.length === 0) {
-      container.innerHTML = '<div class="gh-status">'
-        + '<p>GitHub API rate limit reached. Please try again in a minute.</p>'
-        + '<p>You can also view activity directly on '
-        + '<a href="https://github.com/Bowrna" target="_blank" style="color:#27A822">GitHub</a>.</p>'
-        + '</div>';
-      return;
-    }
-
-    if (items.length === 0) {
-      container.innerHTML = '<div class="gh-status">No public activity found.</div>';
-      return;
-    }
-
-    populateRepoDropdown();
-    renderTimeline();
-  });
+  var cached = loadCache();
+  if (cached) {
+    boot(cached.events, cached.expiresAt, true);
+  } else {
+    fetchPage(1, [], null, function (err, events, xhr) {
+      if (err === 'rate_limited' && !events.length) {
+        document.getElementById('gh-timeline').innerHTML = '<div class="gh-status">'
+          + '<p>GitHub API rate limit reached.</p>'
+          + '<p>View activity directly on <a href="https://github.com/Bowrna" target="_blank" style="color:#27A822">GitHub</a>.</p>'
+          + '</div>';
+        return;
+      }
+      var expiresAt = xhr ? computeExpiry(xhr) : Date.now() + DEFAULT_TTL;
+      boot(events, expiresAt, false);
+    });
+  }
 })();
 </script>
