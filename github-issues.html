@@ -302,7 +302,7 @@ title: GitHub Activity
 <script>
 (function () {
   var GITHUB_USER  = 'Bowrna';
-  var CACHE_KEY    = 'gh_events_' + GITHUB_USER;
+  var CACHE_KEY    = 'gh_events_v3_' + GITHUB_USER; // bump version to bust stale caches
   var DEFAULT_TTL  = 5 * 60 * 1000;
   var ARCHIVE_BASE = '/static/github-activity';
   var PER_PAGE     = 100;
@@ -445,36 +445,58 @@ title: GitHub Activity
     return event.repo ? event.repo.name : '';
   }
 
+  // Build a GitHub URL from repo name + number when html_url is absent
+  // (public events API returns abbreviated PR objects without html_url)
+  function ghUrl(repo, kind, number, fallback) {
+    if (fallback) return fallback;
+    if (repo && number) return 'https://github.com/' + repo + '/' + kind + '/' + number;
+    return null;
+  }
+
   function getEventMeta(event) {
-    var p = event.payload;
+    var p    = event.payload;
+    var repo = event.repo ? event.repo.name : '';
+    if (!p) return null;
+
     if (event.type === 'IssuesEvent') {
-      var action = p.action;
+      var issue = p.issue;
+      if (!issue || !issue.title) return null;
+      var url = ghUrl(repo, 'issues', issue.number, issue.html_url);
+      if (!url) return null;
+      var action = p.action || 'updated';
       return {
-        title:  p.issue.title,
-        url:    p.issue.html_url,
+        title:  issue.title,
+        url:    url,
         kind:   'issue',
         dot:    (action === 'opened' || action === 'reopened') ? 'open' : action === 'closed' ? 'closed' : 'open',
         action: action,
-        labels: p.issue.labels || []
+        labels: issue.labels || []
       };
     }
     if (event.type === 'IssueCommentEvent') {
+      var issue = p.issue;
+      if (!issue || !issue.title) return null;
+      var url = (p.comment && p.comment.html_url) || ghUrl(repo, 'issues', issue.number, issue.html_url);
+      if (!url) return null;
       return {
-        title:  p.issue.title,
-        url:    (p.comment && p.comment.html_url) || p.issue.html_url,
+        title:  issue.title,
+        url:    url,
         kind:   'comment',
         dot:    'comment',
         action: 'commented',
-        labels: p.issue.labels || []
+        labels: issue.labels || []
       };
     }
     if (event.type === 'PullRequestEvent') {
-      var pr     = p.pull_request;
-      var action = p.action;
-      var merged = action === 'closed' && pr && pr.merged;
+      var pr = p.pull_request;
+      if (!pr || !pr.title) return null;
+      var url = ghUrl(repo, 'pull', pr.number || p.number, pr.html_url);
+      if (!url) return null;
+      var action = p.action || 'updated';
+      var merged = action === 'closed' && pr.merged;
       return {
         title:  pr.title,
-        url:    pr.html_url,
+        url:    url,
         kind:   'pr',
         dot:    (action === 'opened' || action === 'reopened') ? 'open' : merged ? 'merged' : action === 'closed' ? 'closed' : 'open',
         action: merged ? 'merged' : action,
@@ -482,9 +504,14 @@ title: GitHub Activity
       };
     }
     if (event.type === 'PullRequestReviewEvent') {
+      var pr = p.pull_request;
+      if (!pr || !pr.title) return null;
+      // review.html_url is more reliable than abbreviated pr.html_url in review events
+      var url = (p.review && p.review.html_url) || ghUrl(repo, 'pull', pr.number, pr.html_url);
+      if (!url) return null;
       return {
-        title:  p.pull_request.title,
-        url:    p.pull_request.html_url,
+        title:  pr.title,
+        url:    url,
         kind:   'review',
         dot:    'review',
         action: 'reviewed',
@@ -492,9 +519,13 @@ title: GitHub Activity
       };
     }
     if (event.type === 'PullRequestReviewCommentEvent') {
+      var pr = p.pull_request;
+      if (!pr || !pr.title) return null;
+      var url = (p.comment && p.comment.html_url) || ghUrl(repo, 'pull', pr.number, pr.html_url);
+      if (!url) return null;
       return {
-        title:  p.pull_request.title,
-        url:    (p.comment && p.comment.html_url) || p.pull_request.html_url,
+        title:  pr.title,
+        url:    url,
         kind:   'comment',
         dot:    'comment',
         action: 'review comment',
