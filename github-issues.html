@@ -1,0 +1,443 @@
+---
+layout: page
+title: GitHub Activity
+---
+
+<style>
+  .gh-page .container {
+    text-align: left;
+    max-width: 820px;
+  }
+
+  .gh-page h2 {
+    color: #333;
+    font-weight: 200;
+    margin-bottom: 4px;
+  }
+
+  .gh-page .subtitle {
+    color: #999;
+    font-size: 14px;
+    margin-bottom: 28px;
+  }
+
+  .gh-page .subtitle a {
+    color: #27A822;
+  }
+
+  /* Filter tabs */
+  .gh-filters {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 28px;
+    flex-wrap: wrap;
+  }
+
+  .gh-filter-btn {
+    padding: 5px 14px;
+    border: 1px solid #ddd;
+    border-radius: 20px;
+    background: #fff;
+    color: #555;
+    font-size: 13px;
+    cursor: pointer;
+    transition: all 0.15s;
+  }
+
+  .gh-filter-btn:hover {
+    border-color: #27A822;
+    color: #27A822;
+  }
+
+  .gh-filter-btn.active {
+    background: #27A822;
+    border-color: #27A822;
+    color: #fff;
+  }
+
+  /* Timeline */
+  .gh-timeline {
+    position: relative;
+    padding-left: 28px;
+  }
+
+  .gh-timeline::before {
+    content: '';
+    position: absolute;
+    left: 7px;
+    top: 6px;
+    bottom: 0;
+    width: 2px;
+    background: #e8e8e8;
+  }
+
+  .gh-date-group {
+    margin-bottom: 32px;
+  }
+
+  .gh-date-label {
+    font-size: 12px;
+    font-weight: 600;
+    color: #999;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    margin-bottom: 12px;
+    position: relative;
+  }
+
+  .gh-date-label::before {
+    content: '';
+    position: absolute;
+    left: -24px;
+    top: 4px;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: #ccc;
+    border: 2px solid #fff;
+    box-shadow: 0 0 0 2px #ccc;
+  }
+
+  .gh-item {
+    background: #fff;
+    border: 1px solid #e8e8e8;
+    border-radius: 6px;
+    padding: 14px 16px;
+    margin-bottom: 10px;
+    position: relative;
+    transition: box-shadow 0.15s;
+  }
+
+  .gh-item:hover {
+    box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+    border-color: #d0d0d0;
+  }
+
+  .gh-item-header {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    flex-wrap: wrap;
+  }
+
+  .gh-state-dot {
+    flex-shrink: 0;
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    margin-top: 5px;
+  }
+
+  .gh-state-dot.open   { background: #27A822; }
+  .gh-state-dot.closed { background: #cb2431; }
+  .gh-state-dot.merged { background: #6f42c1; }
+
+  .gh-item-title {
+    flex: 1;
+    font-size: 14px;
+    font-weight: 600;
+    color: #333;
+    line-height: 1.4;
+    text-decoration: none;
+  }
+
+  .gh-item-title:hover { color: #27A822; }
+
+  .gh-type-badge {
+    font-size: 11px;
+    padding: 2px 8px;
+    border-radius: 10px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    white-space: nowrap;
+  }
+
+  .gh-type-badge.issue { background: #e6f4ea; color: #27A822; }
+  .gh-type-badge.pr    { background: #f0ebfc; color: #6f42c1; }
+
+  .gh-item-meta {
+    margin-top: 7px;
+    font-size: 12px;
+    color: #888;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px;
+    align-items: center;
+  }
+
+  .gh-repo {
+    font-weight: 600;
+    color: #555;
+    text-decoration: none;
+  }
+
+  .gh-repo:hover { color: #27A822; }
+
+  .gh-labels {
+    display: flex;
+    gap: 5px;
+    flex-wrap: wrap;
+  }
+
+  .gh-label {
+    font-size: 11px;
+    padding: 1px 7px;
+    border-radius: 10px;
+    font-weight: 600;
+    color: #fff;
+  }
+
+  .gh-state-text {
+    font-weight: 600;
+  }
+
+  .gh-state-text.open   { color: #27A822; }
+  .gh-state-text.closed { color: #cb2431; }
+  .gh-state-text.merged { color: #6f42c1; }
+
+  /* Loading / error / empty */
+  .gh-status {
+    text-align: center;
+    padding: 60px 20px;
+    color: #999;
+  }
+
+  .gh-status .spinner {
+    width: 36px;
+    height: 36px;
+    border: 3px solid #e8e8e8;
+    border-top-color: #27A822;
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+    margin: 0 auto 16px;
+  }
+
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  .gh-rate-note {
+    font-size: 12px;
+    color: #bbb;
+    margin-top: 28px;
+    text-align: center;
+  }
+
+  .gh-rate-note a { color: #27A822; }
+</style>
+
+<section class="gh-page">
+  <div class="container">
+    <h2>GitHub Activity</h2>
+    <p class="subtitle">
+      Issues &amp; pull requests I'm involved in &mdash;
+      <a href="https://github.com/Bowrna" target="_blank">@Bowrna</a>
+    </p>
+
+    <div class="gh-filters" id="gh-filters">
+      <button class="gh-filter-btn active" data-filter="all">All</button>
+      <button class="gh-filter-btn" data-filter="open">Open</button>
+      <button class="gh-filter-btn" data-filter="closed">Closed</button>
+      <button class="gh-filter-btn" data-filter="pr">Pull Requests</button>
+      <button class="gh-filter-btn" data-filter="issue">Issues only</button>
+    </div>
+
+    <div id="gh-timeline" class="gh-timeline">
+      <div class="gh-status">
+        <div class="spinner"></div>
+        <div>Loading activity from GitHub…</div>
+      </div>
+    </div>
+
+    <p class="gh-rate-note">
+      Data fetched live from the
+      <a href="https://docs.github.com/en/rest/search/search" target="_blank">GitHub Search API</a>.
+      Unauthenticated requests are rate-limited to 10/min.
+    </p>
+  </div>
+</section>
+
+<script>
+(function () {
+  var GITHUB_USER = 'Bowrna';
+  var PER_PAGE    = 30;
+  var allItems    = [];
+  var activeFilter = 'all';
+
+  function fetchPage(page, accumulated, callback) {
+    var url = 'https://api.github.com/search/issues'
+      + '?q=involves:' + GITHUB_USER
+      + '&sort=updated&order=desc'
+      + '&per_page=' + PER_PAGE
+      + '&page=' + page;
+
+    var xhr = new XMLHttpRequest();
+    xhr.open('GET', url);
+    xhr.setRequestHeader('Accept', 'application/vnd.github.v3+json');
+    xhr.onload = function () {
+      if (xhr.status === 200) {
+        var data = JSON.parse(xhr.responseText);
+        var items = accumulated.concat(data.items || []);
+        // fetch up to 3 pages (90 items) to build a meaningful timeline
+        if (data.items && data.items.length === PER_PAGE && page < 3) {
+          fetchPage(page + 1, items, callback);
+        } else {
+          callback(null, items);
+        }
+      } else if (xhr.status === 403) {
+        callback('rate_limited', accumulated);
+      } else {
+        callback('error_' + xhr.status, accumulated);
+      }
+    };
+    xhr.onerror = function () { callback('network_error', accumulated); };
+    xhr.send();
+  }
+
+  function parseRepo(item) {
+    // repository_url: "https://api.github.com/repos/owner/repo"
+    var parts = (item.repository_url || '').split('/');
+    return parts.slice(-2).join('/');
+  }
+
+  function isPR(item) {
+    return !!(item.pull_request);
+  }
+
+  function stateOf(item) {
+    if (isPR(item) && item.pull_request && item.pull_request.merged_at) return 'merged';
+    return item.state; // 'open' | 'closed'
+  }
+
+  function formatDate(iso) {
+    var d = new Date(iso);
+    return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+  }
+
+  function monthYear(iso) {
+    var d = new Date(iso);
+    return d.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+  }
+
+  function labelStyle(color) {
+    // GitHub label colors are hex without '#'
+    return 'background-color:#' + color + ';';
+  }
+
+  function filteredItems() {
+    return allItems.filter(function (item) {
+      if (activeFilter === 'all')    return true;
+      if (activeFilter === 'open')   return item.state === 'open';
+      if (activeFilter === 'closed') return item.state === 'closed';
+      if (activeFilter === 'pr')     return isPR(item);
+      if (activeFilter === 'issue')  return !isPR(item);
+      return true;
+    });
+  }
+
+  function renderTimeline() {
+    var items = filteredItems();
+    var container = document.getElementById('gh-timeline');
+
+    if (items.length === 0) {
+      container.innerHTML = '<div class="gh-status">No items found for this filter.</div>';
+      return;
+    }
+
+    // Group by month-year of updated_at
+    var groups = {};
+    var groupOrder = [];
+    items.forEach(function (item) {
+      var key = monthYear(item.updated_at);
+      if (!groups[key]) {
+        groups[key] = [];
+        groupOrder.push(key);
+      }
+      groups[key].push(item);
+    });
+
+    var html = '';
+    groupOrder.forEach(function (monthLabel) {
+      html += '<div class="gh-date-group">';
+      html += '<div class="gh-date-label">' + monthLabel + '</div>';
+
+      groups[monthLabel].forEach(function (item) {
+        var type  = isPR(item) ? 'pr' : 'issue';
+        var state = stateOf(item);
+        var repo  = parseRepo(item);
+        var repoUrl = 'https://github.com/' + repo;
+        var stateLabel = state.charAt(0).toUpperCase() + state.slice(1);
+
+        var labelsHtml = '';
+        if (item.labels && item.labels.length) {
+          labelsHtml = '<span class="gh-labels">';
+          item.labels.slice(0, 4).forEach(function (lbl) {
+            labelsHtml += '<span class="gh-label" style="' + labelStyle(lbl.color) + '">'
+              + escHtml(lbl.name) + '</span>';
+          });
+          labelsHtml += '</span>';
+        }
+
+        html += '<div class="gh-item">'
+          + '<div class="gh-item-header">'
+          +   '<span class="gh-state-dot ' + state + '"></span>'
+          +   '<a class="gh-item-title" href="' + item.html_url + '" target="_blank">'
+          +     escHtml(item.title)
+          +   '</a>'
+          +   '<span class="gh-type-badge ' + type + '">' + (type === 'pr' ? 'PR' : 'Issue') + '</span>'
+          + '</div>'
+          + '<div class="gh-item-meta">'
+          +   '<a class="gh-repo" href="' + repoUrl + '" target="_blank">' + escHtml(repo) + '</a>'
+          +   '<span class="gh-state-text ' + state + '">' + stateLabel + '</span>'
+          +   '<span>Updated ' + formatDate(item.updated_at) + '</span>'
+          +   labelsHtml
+          + '</div>'
+          + '</div>';
+      });
+
+      html += '</div>';
+    });
+
+    container.innerHTML = html;
+  }
+
+  function escHtml(str) {
+    return String(str)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;');
+  }
+
+  // Filter button clicks
+  document.getElementById('gh-filters').addEventListener('click', function (e) {
+    var btn = e.target.closest('.gh-filter-btn');
+    if (!btn) return;
+    document.querySelectorAll('.gh-filter-btn').forEach(function (b) { b.classList.remove('active'); });
+    btn.classList.add('active');
+    activeFilter = btn.dataset.filter;
+    renderTimeline();
+  });
+
+  // Kick off fetch
+  fetchPage(1, [], function (err, items) {
+    allItems = items;
+    var container = document.getElementById('gh-timeline');
+
+    if (err === 'rate_limited' && items.length === 0) {
+      container.innerHTML = '<div class="gh-status">'
+        + '<p>GitHub API rate limit reached. Please try again in a minute.</p>'
+        + '<p>You can also view activity directly on '
+        + '<a href="https://github.com/Bowrna" target="_blank" style="color:#27A822">GitHub</a>.</p>'
+        + '</div>';
+      return;
+    }
+
+    if (items.length === 0) {
+      container.innerHTML = '<div class="gh-status">No public activity found.</div>';
+      return;
+    }
+
+    renderTimeline();
+  });
+})();
+</script>
