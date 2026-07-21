@@ -419,7 +419,7 @@ title: GitHub Activity
               });
             });
             merged.sort(function (a, b) { return new Date(b.created_at) - new Date(a.created_at); });
-            merged = suppressOpenedIfMerged(merged);
+            merged = suppressPREventsIfMerged(merged);
 
             allEvents = merged;
             if (!merged.length) {
@@ -442,8 +442,8 @@ title: GitHub Activity
 
   // --- PR deduplication ---
 
-  function suppressOpenedIfMerged(events) {
-    // Collect repo+number keys for every merged PR
+  function suppressPREventsIfMerged(events) {
+    // Collect repo#number keys for every merged PR
     var mergedKeys = {};
     events.forEach(function (ev) {
       if (ev.type !== 'PullRequestEvent') return;
@@ -452,13 +452,15 @@ title: GitHub Activity
         mergedKeys[getRepo(ev) + '#' + p.pull_request.number] = true;
       }
     });
-    // Drop "opened" events for PRs that have a merged event
+    // For a merged PR: keep only the merged event itself, drop everything else
+    // (opened, labeled, reviewed, review comments, etc.)
     return events.filter(function (ev) {
-      if (ev.type !== 'PullRequestEvent') return true;
       var p = ev.payload;
-      if (!p || p.action !== 'opened') return true;
-      var pr = p.pull_request;
-      return !pr || !mergedKeys[getRepo(ev) + '#' + pr.number];
+      var pr = p && p.pull_request;
+      if (!pr || !pr.number) return true;
+      var key = getRepo(ev) + '#' + pr.number;
+      if (!mergedKeys[key]) return true;
+      return ev.type === 'PullRequestEvent' && p.action === 'closed' && pr.merged;
     });
   }
 
