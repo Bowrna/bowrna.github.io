@@ -420,6 +420,21 @@ title: GitHub Activity
             });
             merged.sort(function (a, b) { return new Date(b.created_at) - new Date(a.created_at); });
 
+            // DEBUG — open browser DevTools > Console to see raw event shapes
+            var prSample = merged.find(function (ev) { return ev.type && ev.type.indexOf('PullRequest') === 0; });
+            if (prSample) {
+              console.group('GH Activity debug — first PullRequest* event');
+              console.log('type:', prSample.type);
+              console.log('repo:', prSample.repo && prSample.repo.name);
+              console.log('payload keys:', Object.keys(prSample.payload || {}));
+              var pr = prSample.payload && prSample.payload.pull_request;
+              console.log('payload.pull_request keys:', pr ? Object.keys(pr) : 'MISSING');
+              console.log('payload.pull_request.title:', pr && pr.title);
+              console.log('payload.pull_request.html_url:', pr && pr.html_url);
+              console.log('payload.pull_request.number:', pr && pr.number);
+              console.groupEnd();
+            }
+
             allEvents = merged;
             if (!merged.length) {
               document.getElementById('gh-timeline').innerHTML = '<div class="gh-status">No public activity found.</div>';
